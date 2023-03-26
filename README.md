@@ -2,4 +2,6 @@
 
 
 npm install
+
+
 node getPriceOracle.js
