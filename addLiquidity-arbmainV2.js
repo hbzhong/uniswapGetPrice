@@ -76,14 +76,116 @@ function sleep(delay) {
   });
 }
 
-
-async function main() {
-  console.log("hello world");
+function getPriceFromTick(tick)
+{
   var sqrtRatioX96;
   var ratioX192;
   var shift;
   var baseAmount;
   var quoteAmount;
+  
+    sqrtRatioX96 = TickMath.getSqrtRatioAtTick(tick);
+    ratioX192    = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
+    baseAmount   = JSBI.BigInt(10**decimals0);
+    shift        = JSBI.leftShift(JSBI.BigInt(1), JSBI.BigInt(192));
+    quoteAmount  = FullMath.mulDivRoundingUp(ratioX192, baseAmount, shift);
+    quoteAmount = quoteAmount/(10**decimals1);
+    
+    return quoteAmount;	
+}
+
+// 组LP的价格，如果lp_price 为0, 就代表还没开始组LP
+var lp_price = 0;
+var lp_eth_amount = 0;
+var lp_usdc_amount = 0;
+var lp_token_id = 0;
+
+
+// 用于暂存 比较的lp价格
+var cur_lp_price = 0;
+var cur_lp_upper = 0;
+var cur_lp_lower = 0;
+
+var isNeedMonitorInit = 1;
+async function monitor_hdl()
+{ 
+    var cnt;
+    var cur_lp_price_temp = 0;
+    var cur_lp_upper_temp = 0;
+    var cur_lp_lower_temp = 0;    
+    
+    var monTickUpper;
+    var monTickLower;  
+    var poolData;
+    
+    cnt = 0;
+    while (1)
+    {
+	    // 监控
+	    try {
+	        poolData = await getPoolData(poolContract)
+	    } catch (error) {
+	        error.message; // "Oops!"
+	      
+	        console.log ("oops .............");
+	        await sleep(5);
+	        continue;
+	    }
+
+	    // 方式1：
+	    cur_lp_price_temp = getPriceFromTick(poolData.tick);
+	    console.log ("1==>tick:"+poolData.tick.toString()+ " price:"+cur_lp_price_temp.toString());
+
+	    // lower
+	    //
+	    monTickLower = (nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8);
+	    cur_lp_lower_temp = getPriceFromTick(monTickLower);
+	    console.log ("lower:"+cur_lp_lower_temp);
+
+	    // upper
+	    monTickUpper = (nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8);
+	    cur_lp_upper_temp = getPriceFromTick(monTickUpper);
+	    console.log ("upper:"+cur_lp_upper_temp);
+
+	    if (isNeedMonitorInit)
+	    {
+		cur_lp_price = cur_lp_price_temp;
+		cur_lp_upper = cur_lp_upper_temp;
+		cur_lp_lower = cur_lp_lower_temp;  	    	
+	    	isNeedMonitorInit = 0;
+	    }
+	    else
+	    {
+	    	//  当前价格越界
+	    	if ((cur_lp_price_temp < cur_lp_lower)
+	           || (cur_lp_price_temp > cur_lp_upper))
+	        {
+	        	console.log("[monitor] recnt=0");
+	       	cnt = 0;
+	       	// 重新赋值
+			cur_lp_price = cur_lp_price_temp;
+			cur_lp_upper = cur_lp_upper_temp;
+			cur_lp_lower = cur_lp_lower_temp;  	    		       	
+	        }
+	    }
+
+	    console.log (Date.now()/1000);
+	    await sleep(20);	
+	    
+	    cnt++;
+	    // 15*60, 测试就 60
+	    if (cnt >= (15*60/20))
+	    {
+	    	// 可以去组LP监控完成
+	    	console.log("[monitor]finish monitor:"+cur_lp_price_temp + " UP:"+ cur_lp_upper_temp + " DOWN:"+cur_lp_lower_temp);
+	    	break;
+	    }
+    }
+}
+
+// 组LP
+async function make_lp()
+{
   var monTickUpper;
   var monTickLower;  
 
@@ -92,6 +194,112 @@ async function main() {
 
   var poolData = await getPoolData(poolContract)
   console.log("fee:"+poolData.fee);
+
+  const WETH_UNI_POOL = new Pool(
+    WethToken,
+    UniToken,
+    poolData.fee,
+    poolData.sqrtPriceX96.toString(),
+    poolData.liquidity.toString(),
+    poolData.tick
+  )
+  console.log("fee:"+poolData.fee.toString()+" tick:"+poolData.tick.toString()+ " liquidity:"+poolData.liquidity.toString());
+
+  const position = new Position({
+    pool: WETH_UNI_POOL,
+    liquidity: ethers.utils.parseUnits('0.01', 18),  // 这里的总的ETH价格
+    tickLower: nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8,
+    tickUpper: nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8,
+  })
+
+  console.log("lower:"+ (nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8));
+  console.log("upper:"+ (nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8));  
+
+  const wallet = new ethers.Wallet(WALLET_SECRET)
+  const connectedWallet = wallet.connect(provider)
+
+  const approvalAmount = ethers.utils.parseUnits('1', 18).toString()
+
+  const { amount0: amount0Desired, amount1: amount1Desired} = position.mintAmounts
+  // mintAmountsWithSlippage
+  console.log("mount0:"+amount0Desired.toString()+" mount1:"+amount1Desired.toString());
+
+  params = {
+    token0: address0,
+    token1: address1,
+    fee: poolData.fee,
+    tickLower: nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8,
+    tickUpper: nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8,
+    amount0Desired: amount0Desired.toString(),
+    amount1Desired: amount1Desired.toString(),
+    amount0Min: amount0Desired.toString(),
+    amount1Min: amount1Desired.toString(),
+    recipient: WALLET_ADDRESS,
+    deadline: Math.floor(Date.now() / 1000) + (60 * 10)
+  }
+
+  
+  nonfungiblePositionManagerContract.connect(connectedWallet).mint(
+    params,                          
+    { gasLimit: ethers.utils.hexlify(1000000) }
+  ).then(async (res) => {
+    console.log("msg out:");
+    console.log(res);
+    console.log("END");
+
+    const hash = res.hash;
+    console.log("hash:"+res.hash);
+
+    var recRes;
+    var n;
+    for (n=0; n<100; n++)
+    {
+      recRes = await provider.getTransactionReceipt(hash);
+      console.log(recRes);
+      if (recRes != null)
+      {
+        break;
+      }
+      await sleep(5);
+    }
+
+    console.log("n:"+n);
+
+    for (var i=0; i<recRes.logs.length; i++)
+    {
+      // IncreaseLiquidity  的操作
+      if (recRes.logs[i].topics[0] == '0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f')
+      { 
+        console.log("got it: i:"+i);
+        for (var j=1; j<recRes.logs[i].topics.length; j++)
+        {
+          console.log("j:"+j+" "+recRes.logs[i].topics[j]);
+        }
+      }
+    }
+
+  })
+}
+
+async function main() {
+  console.log("hello world");
+
+  var monTickUpper;
+  var monTickLower;  
+
+  const poolAddress = await factoryContract.getPool(address1, address0,  500)
+  console.log('poolAddress', poolAddress.toString())
+
+  var poolData = await getPoolData(poolContract)
+  console.log("fee:"+poolData.fee);
+
+  // 监控测试。
+  isNeedMonitorInit = 1;
+  monitor_hdl();
+  while(1)
+  {
+  	await sleep(5);
+  }
 
   while (1)
   {
@@ -107,42 +315,27 @@ async function main() {
     }
 
     // 方式1：
-    sqrtRatioX96 = TickMath.getSqrtRatioAtTick(poolData.tick);
-    ratioX192    = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
-    baseAmount   = JSBI.BigInt(10**decimals0);
-    shift        = JSBI.leftShift(JSBI.BigInt(1), JSBI.BigInt(192));
-    quoteAmount  = FullMath.mulDivRoundingUp(ratioX192, baseAmount, shift);
-    quoteAmount = quoteAmount/(10**decimals1);
-
+    quoteAmount = getPriceFromTick(poolData.tick);
     console.log ("1==>tick:"+poolData.tick.toString()+ " price:"+quoteAmount.toString());
 
+/*
     // 方式2：
     ratioX192    = poolData.sqrtPriceX96;
-    ratioX192    = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
+    ratioX192    = JSBI.multiply(ratioX192, ratioX192);
     baseAmount   = JSBI.BigInt(10**decimals0);
     shift        = JSBI.leftShift(JSBI.BigInt(1), JSBI.BigInt(192));
     quoteAmount  = FullMath.mulDivRoundingUp(ratioX192, baseAmount, shift);
     quoteAmount = quoteAmount/(10**decimals1);
     console.log ("2==>tick:"+poolData.tick.toString()+ " price:"+quoteAmount.toString());
-
+*/
     //  (nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 2)
     //   (nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 2)
     monTickLower = (nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8);
-    sqrtRatioX96 = TickMath.getSqrtRatioAtTick(monTickLower);
-    ratioX192    = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
-    baseAmount   = JSBI.BigInt(10**decimals0);
-    shift        = JSBI.leftShift(JSBI.BigInt(1), JSBI.BigInt(192));
-    quoteAmount  = FullMath.mulDivRoundingUp(ratioX192, baseAmount, shift);
-    quoteAmount = quoteAmount/(10**decimals1);
+    quoteAmount = getPriceFromTick(monTickLower);
     console.log ("lower:"+quoteAmount);
 
     monTickUpper = (nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8);
-    sqrtRatioX96 = TickMath.getSqrtRatioAtTick(monTickUpper);
-    ratioX192    = JSBI.multiply(sqrtRatioX96, sqrtRatioX96);
-    baseAmount   = JSBI.BigInt(10**decimals0);
-    shift        = JSBI.leftShift(JSBI.BigInt(1), JSBI.BigInt(192));
-    quoteAmount  = FullMath.mulDivRoundingUp(ratioX192, baseAmount, shift);
-    quoteAmount = quoteAmount/(10**decimals1);
+    quoteAmount = getPriceFromTick(monTickUpper);
     console.log ("upper:"+quoteAmount);
 
     console.log (Date.now()/1000);
@@ -236,6 +429,7 @@ async function main() {
 
     for (var i=0; i<recRes.logs.length; i++)
     {
+      // IncreaseLiquidity  的操作
       if (recRes.logs[i].topics[0] == '0x3067048beee31b25b2f1681f88dac838c8bba36af25bfb2b7cf7473a5847e35f')
       { 
         console.log("got it: i:"+i);
@@ -246,17 +440,6 @@ async function main() {
       }
     }
 
-
-    /*
-    const mintAbi = ["tuple(uint256,uint128,uint256,uint256)"];
-    const decodedRes = ethers.utils.defaultAbiCoder.decode(mintAbi, res);
-    
-    const tokenId = decodedRes[0][0];
-    const liquidity = decodedRes[0][1];
-    const amount0 = decodedRes[0][2];
-    const amount1 = decodedRes[0][3];    
-    console.log("tokenId:"+tokenId+" liquidity: "+liquidity+"amount0 "+amount0+"amount1 "+amount1);    
-    */
   })
   
   
