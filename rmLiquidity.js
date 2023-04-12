@@ -80,6 +80,9 @@ async function main() {
     '62003'
   ).then((res) => {
     const totalLiquidity = res.liquidity;
+
+    console.log(res);    
+    
     params = {
       tokenId: 62003,
       liquidity: totalLiquidity,

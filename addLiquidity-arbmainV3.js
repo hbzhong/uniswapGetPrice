@@ -317,8 +317,7 @@ async function make_lp()
   console.log("lower:"+ (nearestUsableTick(poolData.tick, poolData.tickSpacing) - poolData.tickSpacing * 8));
   console.log("upper:"+ (nearestUsableTick(poolData.tick, poolData.tickSpacing) + poolData.tickSpacing * 8));  
 
-  const wallet = new ethers.Wallet(WALLET_SECRET)
-  const connectedWallet = wallet.connect(provider)
+  const connectedWallet = wallet_hdl.connect(provider)
 
   const approvalAmount = ethers.utils.parseUnits('1', 18).toString()
 
@@ -406,6 +405,7 @@ async function rm_lp()
   nonfungiblePositionManagerContract.connect(connectedWallet).positions(
     lp_token_id.toString()
   ).then((res) => {
+     
     const totalLiquidity = res.liquidity;
     params = {
       tokenId: lp_token_id,
