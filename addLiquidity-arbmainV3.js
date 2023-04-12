@@ -270,7 +270,8 @@ async function monitor_hdl()
 	        }
 	    }
 
-	    console.log (Date.now()/1000);
+	    var d = new Date();
+	    console.log (d.toLocaleString());
 	    await sleep(20);	
 	    
 	    cnt++;
@@ -510,6 +511,7 @@ async function import_wallet()
     else
       rl.output.write(stringToWrite);
   };
+
   await sleep(10);
   // 获取到钱包
   ethers.Wallet.fromEncryptedJson(json_wallet, wallet_password).then(function(wallet) {
@@ -603,21 +605,10 @@ async function main() {
   var poolData = await getPoolData(poolContract)
   console.log("fee:"+poolData.fee);
 */
-/*
-  const wallet1 = new ethers.Wallet(WALLET_SECRET)  
-  wallet1.encrypt("helloworld").then(function(json) {
-    console.log(json);
-  });
-
-  while(1)
-  {
-    sleep(1);
-  }
-*/
   
-//  import_wallet();
-
+  
   /* 获取 密码*/
+/*  
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -636,7 +627,9 @@ async function main() {
     else
       rl.output.write(stringToWrite);
   };
+
   await sleep(10);
+  
   // 获取到钱包
   ethers.Wallet.fromEncryptedJson(json_wallet, wallet_password).then(function(wallet) {
     wallet_hdl = wallet;
@@ -645,17 +638,20 @@ async function main() {
     console.log(error)
     return;
   });
-
+*/    
+  await import_wallet();
   while (1)
   {
     isNeedMonitorInit = 1;
-    monitor_hdl();  
-
-//    make_lp();
-    
-//    monitor_to_exit();
+    await monitor_hdl();  
+    await make_lp();
+    await monitor_to_exit();
   }
   
 }
 
+
 main()
+//get_wallet_json()
+
+
